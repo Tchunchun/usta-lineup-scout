@@ -1,0 +1,13 @@
+# Ignore everything by default
+*
+
+# Keep this file tracked
+!.gitignore
+
+# Keep the public README
+!README.md
+
+# Keep the scouting skill directory and its contents
+!skills/
+!skills/usta-scout/
+!skills/usta-scout/**
