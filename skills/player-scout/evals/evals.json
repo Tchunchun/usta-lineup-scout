@@ -1,0 +1,104 @@
+{
+  "skill_name": "player-scout",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Scout Jane Zhu from Redmond, WA.",
+      "inputs": { "first": "Jane", "last": "Zhu", "location": "Redmond, WA" },
+      "expected_output": "A .docx report in reports/ for the Redmond, WA Jane Zhu. Header shows DR and NTRP, report includes TL;DR, volume split (S vs D), overall and split W-L, opponent difficulty stats (mean/median/min/max), rating trend label with slope, top wins and upset losses, court + partner breakdowns, and a full match log covering the last 24 months.",
+      "pass_criteria": [
+        "Output file exists under reports/ with a date-stamped filename",
+        "Title block shows NTRP, rating type (C or S), and DR with an 'as of' date",
+        "TL;DR contains 3–5 bullet points",
+        "Opponent strength section shows split record vs tougher / peer / easier opponents",
+        "Match log row count equals the number of matches in the 24-month window"
+      ],
+      "tags": ["happy-path"]
+    },
+    {
+      "id": 2,
+      "prompt": "Scout Christa Hansma — she's self-rated.",
+      "inputs": { "first": "Christa", "last": "Hansma" },
+      "expected_output": "Report includes a prominent self-rated warning near the top in dark red bold. Analysis treats the player's listed NTRP as potentially under-representing their true level.",
+      "pass_criteria": [
+        "Rating type in title block is 'S'",
+        "Self-rated warning paragraph appears before the TL;DR, bold and dark red",
+        "TL;DR mentions the self-rated status explicitly"
+      ],
+      "tags": ["happy-path"]
+    },
+    {
+      "id": 3,
+      "prompt": "Scout John Smith — no location given.",
+      "inputs": { "first": "John", "last": "Smith" },
+      "expected_output": "Search returns many matches. Skill asks the user to pick via AskUserQuestion with one option per candidate, each showing name + location + NTRP.",
+      "pass_criteria": [
+        "Skill does not auto-pick a candidate",
+        "AskUserQuestion is invoked with ≥2 options",
+        "Each option includes the player's location and NTRP",
+        "No .docx is written before the user selects"
+      ],
+      "tags": ["edge-case"]
+    },
+    {
+      "id": 4,
+      "prompt": "Scout a player whose last 24 months contain only 3 matches.",
+      "inputs": { "first": "Morgan", "last": "Example" },
+      "expected_output": "Report generates successfully with the small sample but includes a caveat that the sample size is too small for a stable rating-trend signal.",
+      "pass_criteria": [
+        "Report generates despite a 3-match window",
+        "Rating-trend section includes a 'small sample' caveat",
+        "Notable-matches section shows at most 3 entries per category (wins / upsets) without error",
+        "Slope label is reported but not used as a strong claim"
+      ],
+      "tags": ["edge-case"]
+    },
+    {
+      "id": 5,
+      "prompt": "Scout a player whose recent match history shows a sudden +0.4 rating jump between consecutive matches.",
+      "inputs": { "first": "Example", "last": "Bump" },
+      "expected_output": "Report flags the rating jump in the TL;DR as a possible self-rated bump, independent of the C/S label.",
+      "pass_criteria": [
+        "TL;DR includes a bullet calling out the rating jump",
+        "Rating Trend section shows the specific match where the jump occurred",
+        "Flag appears whether the player is labeled C or S"
+      ],
+      "tags": ["edge-case"]
+    },
+    {
+      "id": 6,
+      "prompt": "Scout 'Xyz Nonexistent' — a name that returns zero search results.",
+      "inputs": { "first": "Xyz", "last": "Nonexistent" },
+      "expected_output": "Skill reports no matches, suggests checking spelling or providing a location, and does not write a report.",
+      "pass_criteria": [
+        "No .docx is written to reports/",
+        "User-facing message says no matches were found and suggests spelling / location hints",
+        "Skill does not hang or retry indefinitely"
+      ],
+      "tags": ["failure-mode"]
+    },
+    {
+      "id": 7,
+      "prompt": "Scout team BETC-Downright Smashing-Schiller for 18+ 3.0.",
+      "inputs": { "team": "BETC-Downright Smashing-Schiller" },
+      "expected_output": "player-scout should NOT trigger — this is a team-level request. The usta-team-scout skill should handle it instead.",
+      "pass_criteria": [
+        "player-scout is not activated",
+        "The request is routed to usta-team-scout (or the user is redirected there)"
+      ],
+      "tags": ["negative"]
+    },
+    {
+      "id": 8,
+      "prompt": "Scout a player whose profile page returns HTTP 429 mid-fetch.",
+      "inputs": { "first": "Rate", "last": "Limited" },
+      "expected_output": "Skill detects the 429, stops, surfaces a clear message, and does not write a partial report.",
+      "pass_criteria": [
+        "No .docx file is written",
+        "Message to user explains the rate limit and suggests trying again later",
+        "No aggressive retry loop — at most one polite retry with backoff"
+      ],
+      "tags": ["failure-mode"]
+    }
+  ]
+}

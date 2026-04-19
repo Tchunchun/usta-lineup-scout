@@ -4,10 +4,26 @@
 # Keep this file tracked
 !.gitignore
 
-# Keep the public README
+# Keep the public README and skill guidelines
 !README.md
+!SKILL_GUIDELINES.md
+!AGENTS.md
+!CLAUDE.md
 
-# Keep the scouting skill directory and its contents
+# Always ignore OS / editor cruft (even inside tracked dirs)
+.DS_Store
+**/.DS_Store
+.vscode/
+.idea/
+
+# Generated scouting reports must stay local
+reports/
+__pycache__/
+*.pyc
+
+# Keep the scouting skill directories and their contents
 !skills/
-!skills/usta-scout/
-!skills/usta-scout/**
+!skills/usta-team-scout/
+!skills/usta-team-scout/**
+!skills/player-scout/
+!skills/player-scout/**

@@ -1,0 +1,103 @@
+{
+  "skill_name": "usta-team-scout",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Look up BETC-Downright Smashing-Schiller for 18+ 3.0 and create a scouting report",
+      "inputs": { "team": "BETC-Downright Smashing-Schiller", "year": 2026, "league": "18+ 3.0" },
+      "expected_output": "Full roster (≈18 players with DRs and C/S), 3 completed match tables with both team lineups and C/S next to every name, wildcards flagged, strategy section with per-court notes.",
+      "pass_criteria": [
+        "Output file exists under reports/ with a date-stamped filename",
+        "Roster table has ≥10 rows sorted by DR descending",
+        "At least one self-rated (S) player is flagged with ⚠ and shown as (S)",
+        "Wildcards (roster players absent from completed matches) are shaded yellow and labeled ★",
+        "Strategy section lists all five courts S1, S2, D1, D2, D3"
+      ],
+      "tags": ["happy-path"]
+    },
+    {
+      "id": 2,
+      "prompt": "Look up ETC-Fresh off the Court-Zhu/Walsh for 18+ 3.5 and make a scouting report",
+      "inputs": { "team": "ETC-Fresh off the Court-Zhu/Walsh", "year": 2026, "league": "18+ 3.5" },
+      "expected_output": "Full roster with DRs and C/S, all completed match tables with both teams court by court, not-yet-played players flagged, strategy notes.",
+      "pass_criteria": [
+        "Output file exists under reports/",
+        "Each per-match table shows all five courts",
+        "No player name renders as a raw URL fragment or 'None'",
+        "Filename contains the league level (e.g. 3_5) and current date"
+      ],
+      "tags": ["happy-path"]
+    },
+    {
+      "id": 3,
+      "prompt": "Scout the team 'Smashville' for 40+ 4.0 — there are multiple teams with that name across leagues.",
+      "inputs": { "team": "Smashville", "year": 2026, "league": "40+ 4.0" },
+      "expected_output": "Skill detects the multi-league ambiguity, tries &s=1..3, and picks the team whose page shows the 40+ 4.0 league. If still ambiguous, asks the user to confirm.",
+      "pass_criteria": [
+        "Skill does not silently generate a report from the wrong league",
+        "Final report's league/format matches the requested 40+ 4.0",
+        "If ambiguous, user is asked via AskUserQuestion with a distinct option per candidate"
+      ],
+      "tags": ["edge-case"]
+    },
+    {
+      "id": 4,
+      "prompt": "Scout 'Courtside Rebels' for 18+ 3.5 — the team has zero completed matches this season.",
+      "inputs": { "team": "Courtside Rebels", "year": 2026, "league": "18+ 3.5" },
+      "expected_output": "Roster-only report with an explicit note that there are no completed matches yet and every player is effectively a wildcard.",
+      "pass_criteria": [
+        "Report generates successfully despite zero matches",
+        "Report contains a visible note: 'No completed matches yet — every player is a wildcard'",
+        "All roster players are flagged as ★ NOT YET PLAYED"
+      ],
+      "tags": ["edge-case"]
+    },
+    {
+      "id": 5,
+      "prompt": "Scout team 'Kapo'oloku Hālau' for 18+ 3.0 — team name contains diacritics and special characters.",
+      "inputs": { "team": "Kapo'oloku Hālau", "year": 2026, "league": "18+ 3.0" },
+      "expected_output": "Team URL is correctly URL-encoded, page loads, and the report is produced. Player name matching between roster and match pages handles diacritics via normalization fallback.",
+      "pass_criteria": [
+        "Team URL encodes the apostrophe and diacritic correctly (no 404)",
+        "Wildcards list matches hand-verified roster minus match participants",
+        "No player appears twice in the roster table due to diacritic mismatches"
+      ],
+      "tags": ["edge-case"]
+    },
+    {
+      "id": 6,
+      "prompt": "Scout 'Team That Does Not Exist 9999' for 18+ 3.0.",
+      "inputs": { "team": "Team That Does Not Exist 9999", "year": 2026, "league": "18+ 3.0" },
+      "expected_output": "Team URL returns 404 across &s=1..3. Skill reports the failure, does not fabricate a roster, and does not write a .docx.",
+      "pass_criteria": [
+        "No .docx file is written to reports/",
+        "User-facing message explains the team was not found and suggests confirming the name/year",
+        "Skill does not hang or retry indefinitely"
+      ],
+      "tags": ["failure-mode"]
+    },
+    {
+      "id": 7,
+      "prompt": "What's Jane Zhu's dynamic rating trend over the past year?",
+      "inputs": { "player": "Jane Zhu" },
+      "expected_output": "usta-team-scout should NOT trigger — this is a single-player lookup. The player-scout skill should handle it instead.",
+      "pass_criteria": [
+        "usta-team-scout is not activated",
+        "The request is routed to player-scout (or the user is redirected there)"
+      ],
+      "tags": ["negative"]
+    },
+    {
+      "id": 8,
+      "prompt": "Scout 'Phoenix Courtcrashers' — one of their matches this season was a forfeit on D3.",
+      "inputs": { "team": "Phoenix Courtcrashers", "year": 2026, "league": "18+ 3.5" },
+      "expected_output": "Match table for the forfeit shows D3 as FORFEIT, no fabricated opponent names, and the match is still counted toward the opponent's win total.",
+      "pass_criteria": [
+        "D3 row for the forfeit match contains 'FORFEIT' in the result cell",
+        "No opponent player name is fabricated for the forfeit court",
+        "Season record in the title block reflects the forfeit correctly"
+      ],
+      "tags": ["failure-mode"]
+    }
+  ]
+}
