@@ -2,51 +2,42 @@
 
 Small workspace for building USTA opponent scouting reports from public `tennisrecord.com` data.
 
-This repo currently includes:
+This repo includes two skills:
 
-- a local Codex skill at `skills/usta-scout/`
-- a Python report generator that produces `.docx` scouting reports
-- sample scouting outputs and reference materials for the 2026 season
+- **usta-team-scout** — whole-team `.docx` scouting report
+- **player-scout** — single-player `.docx` scouting report
 
 ## What It Does
 
-The scouting workflow pulls:
+Both skills pull from TennisRecord and generate `.docx` reports containing:
 
-- team roster data
-- dynamic ratings (DR)
-- rating types (`C` or `S`, with anything else treated as unknown)
-- completed match lineups
-- court-by-court results
-- players on the roster who have not appeared in a completed match yet
-
-It then generates a `.docx` scouting report with:
-
-- title block and league metadata
-- roster table
-- one table per completed match
+- roster table with dynamic ratings and rating types (`C` = computer, `S` = self-reported)
+- completed match lineups with court-by-court results
+- players who have not yet appeared in a completed match
 - strategy notes by court
 
 ## Repo Structure
 
 ```text
-skills/usta-scout/
-  SKILL.md              Codex skill instructions
-  evals/evals.json      Sample eval prompts
-  generate_report.py    Local report generator
+skills/
+  usta-team-scout/
+    SKILL.md                    Skill instructions
+    scripts/generate_report.py  Team report generator
+    references/                 Parsing notes and report style guide
+    evals/evals.json            Sample eval prompts
+  player-scout/
+    SKILL.md                    Skill instructions
+    scripts/player_report.py    Player report generator
+    references/                 Parsing notes and report style guide
+    evals/evals.json            Sample eval prompts
 ```
 
 ## Requirements
 
-- `python3`
-- network access to `tennisrecord.com`
+- Python 3.10+
+- Network access to `tennisrecord.com`
 
-Python packages:
-
-- `python-docx`
-- `beautifulsoup4`
-- `lxml`
-
-Install them with:
+Install Python packages:
 
 ```bash
 python3 -m pip install --user python-docx beautifulsoup4 lxml
@@ -54,37 +45,23 @@ python3 -m pip install --user python-docx beautifulsoup4 lxml
 
 ## Usage
 
-Generate a report with:
+**Team report:**
 
 ```bash
-python3 skills/usta-scout/generate_report.py --team "TEAM NAME" --year 2026
+python3 skills/usta-team-scout/scripts/generate_report.py --team "TEAM NAME" --year 2026
 ```
 
-Example:
+**Player report:**
 
 ```bash
-python3 skills/usta-scout/generate_report.py --team "TEAM NAME HERE" --year 2026
+python3 skills/player-scout/scripts/player_report.py --player "First Last" --area "AREA" --year 2026
 ```
 
-Optional custom output path:
-
-```bash
-python3 skills/usta-scout/generate_report.py \
-  --team "TEAM NAME HERE" \
-  --year 2026 \
-  --output "./Scouting_Report.docx"
-```
+Reports are written to `reports/` at the repo root (gitignored).
 
 ## Notes
 
-- The script uses the exact TennisRecord profile links found on team and match pages so it can handle players that require `&s=` disambiguators.
-- Only completed matches are included in the report.
-- Unsupported rating suffixes are normalized to unknown `(—)` rather than treated as a special rating class.
-- The current workflow is best suited for private team prep and small-scale manual use.
-
-## Future Improvements
-
-- add caching so repeated runs are faster
-- parallelize profile fetches
-- make strategy notes more opponent-specific
-- add automated regression checks for parsing changes on TennisRecord pages
+- Profile links include `&s=` disambiguators where needed to handle players sharing a name.
+- Only completed matches are included in reports.
+- Unsupported rating suffixes are normalized to unknown `(—)`.
+- Intended for private team prep and small-scale manual use.
