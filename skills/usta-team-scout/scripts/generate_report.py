@@ -3,6 +3,7 @@ import json
 import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -65,7 +66,10 @@ class MatchReport:
 
 def fetch(url: str) -> str:
     safe_url = quote(url, safe=":/?&=%")
-    return subprocess.check_output(["curl", "-L", "--silent", safe_url], text=True)
+    return subprocess.check_output(
+        ["curl", "-L", "--silent", "--connect-timeout", "30", "--max-time", "60", safe_url],
+        text=True,
+    )
 
 
 def soup_from_url(url: str) -> BeautifulSoup:
@@ -402,72 +406,134 @@ def parse_match(
     )
 
 
-def build_strategy(matches: List[MatchReport], wildcards: List[str]) -> Dict[str, str]:
-    """
-    Generate opponent-intelligence strategy notes from the USER's perspective:
-    who does the scouted team field at each court, how are they performing, and
-    what should the user watch out for?
-    """
-    strategy: Dict[str, str] = {}
-    court_map: Dict[str, List[MatchCourt]] = {"S1": [], "S2": [], "D1": [], "D2": [], "D3": []}
-    for match in matches:
+@dataclass
+class CourtStrategy:
+    likely_lineup: str
+    analysis: str
+
+
+def _format_player(name: str, dr: Optional[float], rating_type: str) -> str:
+    dr_str = f"{dr:.2f}" if dr is not None else "-----"
+    suffix = " ⚠" if rating_type == "S" else ""
+    return f"{name} ({dr_str}, {rating_type}){suffix}"
+
+
+def build_strategy(
+    matches: List[MatchReport],
+    wildcards: List[str],
+    roster: List[Player],
+    team_name: str,
+) -> Dict[str, CourtStrategy]:
+    strategy: Dict[str, CourtStrategy] = {}
+    court_map: Dict[str, List[Tuple[int, MatchCourt, MatchReport]]] = {
+        c: [] for c in ("S1", "S2", "D1", "D2", "D3")
+    }
+    for idx, match in enumerate(matches, 1):
         for court in match.courts:
-            court_map[court.court].append(court)
+            court_map[court.court].append((idx, court, match))
 
     for court, entries in court_map.items():
         if not entries:
-            strategy[court] = "No data yet — treat as unknown."
+            strategy[court] = CourtStrategy(
+                likely_lineup="No data yet",
+                analysis="No completed sample for this court.",
+            )
             continue
 
-        wins = sum(1 for e in entries if e.result == "W")
-        losses = len(entries) - wins
-        record = f"{wins}-{losses}"
+        # --- Lineup prediction ---
 
-        # Collect the scouted team's players at this court across all matches
-        player_appearances: Dict[str, Dict] = {}
-        for entry in entries:
-            for name, dr, rating_type, usta_rating in entry.team_players:
-                if name not in player_appearances:
-                    player_appearances[name] = {"dr": dr, "rating_type": rating_type, "usta_rating": usta_rating, "w": 0, "l": 0}
-                if entry.result == "W":
-                    player_appearances[name]["w"] += 1
-                else:
-                    player_appearances[name]["l"] += 1
+        player_freq: Counter = Counter()
+        for _, entry, _ in entries:
+            for name, dr, rating_type, _ in entry.team_players:
+                player_freq[name] += 1
 
-        # Build player summary strings
-        player_lines = []
-        flags = []
-        for name, info in player_appearances.items():
-            dr_str = "-----" if info["dr"] is None else f"{info['dr']:.2f}"
-            rt = info["rating_type"]
-            pw, pl = info["w"], info["l"]
-            line = f"{name} ({dr_str} {rt}, {pw}-{pl} at {court})"
-            player_lines.append(line)
-            if rt == "S":
-                flags.append(f"{name} is self-rated — actual level unknown")
-            if info["dr"] is None:
-                flags.append(f"{name} has no DR on record")
+        is_doubles = court.startswith("D")
+        top_players = player_freq.most_common(4 if is_doubles else 2)
 
-        players_str = " / ".join(player_lines)
-
-        # Threat assessment
-        if wins == 0:
-            threat = f"Their weakest court this season ({record}). Good opportunity — send a steady player rather than your best."
-        elif losses == 0:
-            threat = f"Their strongest court ({record}, undefeated). Expect a tough match here — bring your best."
-        elif wins > losses:
-            threat = f"More wins than losses ({record}). A capable court — don't underestimate."
+        if is_doubles:
+            # find most common *pair* by grouping team_players per entry
+            pair_freq: Counter = Counter()
+            for _, entry, _ in entries:
+                pair_key = " / ".join(
+                    sorted(n for n, _, _, _ in entry.team_players)
+                )
+                pair_freq[pair_key] += 1
+            best_pair = pair_freq.most_common(1)[0][0]
+            lineup_names = best_pair.split(" / ")
         else:
-            threat = f"More losses than wins ({record}). Winnable, but don't assume."
+            lineup_names = [tp[0] for tp in top_players[:1]]
 
-        note_parts = [f"They field: {players_str}.", threat]
-        if flags:
-            note_parts.append("⚠ " + "; ".join(flags) + ".")
-        if wildcards and court.startswith("D"):
-            note_parts.append("Wildcard players may appear here — keep a flexible pairing ready.")
+        lineup_parts = []
+        for ln in lineup_names:
+            matched = next(
+                (
+                    (name, dr, rt)
+                    for _, entry, _ in entries
+                    for name, dr, rt, _ in entry.team_players
+                    if name == ln
+                ),
+                None,
+            )
+            if matched:
+                lineup_parts.append(_format_player(*matched))
+            else:
+                lineup_parts.append(ln)
+        likely_lineup = "\n".join(lineup_parts) if is_doubles else (lineup_parts[0] if lineup_parts else "TBD")
 
-        strategy[court] = " ".join(note_parts)
+        # If there are alternates, note them
+        alternate_names = {n for n, _ in top_players} - set(lineup_names)
+        if alternate_names:
+            alt_strs = []
+            for an in sorted(alternate_names):
+                matched = next(
+                    (
+                        (name, dr, rt)
+                        for _, entry, _ in entries
+                        for name, dr, rt, _ in entry.team_players
+                        if name == an
+                    ),
+                    None,
+                )
+                alt_strs.append(_format_player(*matched) if matched else an)
+            likely_lineup += "\nor " + " / ".join(alt_strs)
 
+        # --- Analysis per match ---
+        analysis_parts = []
+        for idx, entry, match in entries:
+            team_str = " / ".join(
+                _format_player(n, d, rt)
+                for n, d, rt, _ in entry.team_players
+            )
+            analysis_parts.append(
+                f"Match {idx} vs {match.opponent}: {team_str} — "
+                f"{entry.result} {entry.score}."
+            )
+
+        # Add court-level insight
+        wins = sum(1 for _, e, _ in entries if e.result == "W")
+        losses = len(entries) - wins
+        if wins == len(entries):
+            analysis_parts.append(f"Undefeated on this court ({wins}-0). Expect their strongest players here.")
+        elif losses == len(entries):
+            analysis_parts.append(f"Winless on this court (0-{losses}). This is a vulnerable line.")
+        else:
+            analysis_parts.append(f"Record: {wins}-{losses} on this court.")
+
+        # Flag self-rated
+        s_rated = sorted(set(
+            n for _, e, _ in entries
+            for n, _, rt, _ in e.team_players
+            if rt == "S"
+        ))
+        if s_rated:
+            analysis_parts.append(
+                f"Self-rated: {', '.join(s_rated)} ⚠ — true level unknown."
+            )
+
+        strategy[court] = CourtStrategy(
+            likely_lineup=likely_lineup,
+            analysis=" ".join(analysis_parts),
+        )
     return strategy
 
 
@@ -586,26 +652,151 @@ def add_match_tables(document: Document, matches: List[MatchReport], team_label:
         document.add_paragraph("")
 
 
-def add_strategy_table(document: Document, strategy: Dict[str, str], wildcards: List[str], completed_matches: int) -> None:
+def add_strategy_table(
+    document: Document,
+    strategy: Dict[str, CourtStrategy],
+    wildcards: List[str],
+    completed_matches: int,
+    matches: List[MatchReport],
+    roster: List[Player],
+    team_name: str,
+) -> None:
     document.add_heading("Strategy Notes", level=2)
-    intro = (
-        f"Sample size is limited to {completed_matches} completed matches through {date.today().isoformat()}. "
-        "Treat early lineup reads as directional rather than definitive."
-    )
-    document.add_paragraph(intro)
-    if wildcards:
-        document.add_paragraph("Wildcards: " + ", ".join(wildcards))
 
-    table = document.add_table(rows=1, cols=2)
+    # --- Lineup Prediction header ---
+    p = document.add_paragraph(f"Lineup Prediction — {team_name}")
+    for run in p.runs:
+        run.bold = True
+
+    wins = sum(1 for m in matches if m.team_won_match)
+    losses = len(matches) - wins
+    p2 = document.add_paragraph(
+        f"Based on {completed_matches} completed match{'es' if completed_matches != 1 else ''} ({wins}-{losses}). "
+    )
+    if completed_matches <= 4:
+        p2.add_run("Small sample — treat as directional, not definitive.")
+
+    document.add_paragraph()  # spacer
+
+    # --- Overall Patterns bullets ---
+    p_header = document.add_paragraph("Overall Patterns")
+    for run in p_header.runs:
+        run.bold = True
+
+    court_wins = sum(
+        1 for m in matches for c in m.courts if c.result == "W"
+    )
+    court_losses = sum(
+        1 for m in matches for c in m.courts if c.result == "L"
+    )
+    total_courts = court_wins + court_losses
+
+    bullet = document.add_paragraph(style="List Bullet")
+    bullet.text = (
+        f"Record: {wins}-{losses} ({court_wins}W-{court_losses}L by courts)."
+    )
+
+    # Singles summary
+    s_wins = sum(
+        1 for m in matches for c in m.courts
+        if c.court.startswith("S") and c.result == "W"
+    )
+    s_losses = sum(
+        1 for m in matches for c in m.courts
+        if c.court.startswith("S") and c.result == "L"
+    )
+    if s_wins + s_losses > 0:
+        if s_wins == 0:
+            document.add_paragraph(
+                f"Singles vulnerability: 0-{s_losses} across singles courts. Singles is their weakest area.",
+                style="List Bullet",
+            )
+        elif s_losses == 0:
+            document.add_paragraph(
+                f"Singles strength: {s_wins}-0 across singles courts. Strong singles lineup.",
+                style="List Bullet",
+            )
+        else:
+            document.add_paragraph(
+                f"Singles record: {s_wins}-{s_losses}.",
+                style="List Bullet",
+            )
+
+    # Doubles summary
+    d_wins = sum(
+        1 for m in matches for c in m.courts
+        if c.court.startswith("D") and c.result == "W"
+    )
+    d_losses = sum(
+        1 for m in matches for c in m.courts
+        if c.court.startswith("D") and c.result == "L"
+    )
+    if d_wins + d_losses > 0:
+        if d_wins == 0:
+            document.add_paragraph(
+                f"Doubles vulnerability: 0-{d_losses} across doubles courts.",
+                style="List Bullet",
+            )
+        elif d_losses == 0:
+            document.add_paragraph(
+                f"Doubles strength: {d_wins}-0 across doubles courts.",
+                style="List Bullet",
+            )
+        else:
+            document.add_paragraph(
+                f"Doubles record: {d_wins}-{d_losses}.",
+                style="List Bullet",
+            )
+
+    # Self-rated players on roster
+    s_rated_roster = [p for p in roster if p.rating_type == "S"]
+    if s_rated_roster:
+        names = ", ".join(f"{p.name} ⚠ (S)" for p in s_rated_roster)
+        document.add_paragraph(
+            f"Self-rated flag: {names} — true level unknown, may play above listed rating.",
+            style="List Bullet",
+        )
+
+    # Wildcards
+    if wildcards:
+        document.add_paragraph(
+            f"Wildcards (never appeared): {', '.join(wildcards)} ★ — prepare for unknown lineup slots.",
+            style="List Bullet",
+        )
+    else:
+        document.add_paragraph(
+            "No wildcards: All roster players have appeared in at least one match.",
+            style="List Bullet",
+        )
+
+    # DR 3.0+ depth
+    strong = [p for p in roster if p.dr is not None and p.dr >= 3.0]
+    if strong:
+        document.add_paragraph(
+            f"DR ≥ 3.0 depth: {len(strong)} player{'s' if len(strong) != 1 else ''} "
+            f"({', '.join(p.name for p in strong[:5])}).",
+            style="List Bullet",
+        )
+
+    # --- 3-column strategy table ---
+    table = document.add_table(rows=1, cols=3)
     table.style = "Table Grid"
-    for idx, header in enumerate(["Court", "Recommendation"]):
+    for idx, header in enumerate(["Court", f"{team_name.split('-')[0]} Likely Lineup", "Analysis"]):
         set_cell_text(table.rows[0].cells[idx], header, bold=True, color=WHITE)
         set_cell_shading(table.rows[0].cells[idx], NAVY)
 
     for court in ["S1", "S2", "D1", "D2", "D3"]:
+        cs = strategy[court]
         row = table.add_row().cells
         set_cell_text(row[0], court, bold=True)
-        set_cell_text(row[1], strategy[court])
+        set_cell_text(row[1], cs.likely_lineup)
+        set_cell_text(row[2], cs.analysis)
+
+    # Disclaimer
+    document.add_paragraph(
+        f"Sample size is limited to {completed_matches} completed match{'es' if completed_matches != 1 else ''} "
+        f"through {date.today().isoformat()}. Treat early lineup reads as directional rather than definitive."
+    )
 
 
 def configure_document(document: Document) -> None:
@@ -870,7 +1061,7 @@ def main() -> None:
             except Exception:
                 pass
 
-    strategy = build_strategy(completed_matches, wildcards)
+    strategy = build_strategy(completed_matches, wildcards, roster, resolved_team_name)
     wins = sum(1 for match in completed_matches if match.team_won_match)
     losses = len(completed_matches) - wins
     most_recent_match = completed_matches[-1].date if completed_matches else None
@@ -884,7 +1075,7 @@ def main() -> None:
     add_legend(document, team_name=resolved_team_name)
     add_roster_table(document, roster, wildcards, wildcard_history=wildcard_history)
     add_match_tables(document, completed_matches, team_label=team_label)
-    add_strategy_table(document, strategy, wildcards, len(completed_matches))
+    add_strategy_table(document, strategy, wildcards, len(completed_matches), completed_matches, roster, resolved_team_name)
     validate_report(document, completed_matches, roster)
 
     output_path = build_output_path(args.year, team_level, resolved_team_name, args.output)
