@@ -99,6 +99,20 @@
         "No aggressive retry loop — at most one polite retry with backoff"
       ],
       "tags": ["failure-mode"]
+    },
+    {
+      "id": 9,
+      "prompt": "Scout Chunchun Tong from Newcastle.",
+      "inputs": { "first": "Chunchun", "last": "Tong", "location": "Newcastle" },
+      "expected_output": "A .docx report in reports/ for Chunchun Tong. Header shows DR and NTRP, report includes TL;DR, volume split (S vs D), overall and split W-L, opponent difficulty stats (mean/median/min/max), rating trend label with slope, top wins and upset losses, court + partner breakdowns, and a full match log covering the last 24 months.",
+      "pass_criteria": [
+        "Output file exists under reports/ with a date-stamped filename containing 'Chunchun' and 'Tong'",
+        "Title block shows NTRP, rating type (C or S), and DR with an 'as of' date",
+        "TL;DR contains 3–5 bullet points",
+        "Opponent strength section shows split record vs tougher / peer / easier opponents",
+        "Match log row count equals the number of matches in the 24-month window"
+      ],
+      "tags": ["happy-path"]
     }
   ]
 }
