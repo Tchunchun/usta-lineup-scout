@@ -47,7 +47,7 @@
       "expected_output": "Roster-only report with an explicit note that there are no completed matches yet and every player is effectively a wildcard.",
       "pass_criteria": [
         "Report generates successfully despite zero matches",
-        "Report contains a visible note: 'No completed matches yet — every player is a wildcard'",
+        "Report contains a visible note: 'No completed matches yet — every roster player is currently treated as a wildcard.'",
         "All roster players are flagged as ★ NOT YET PLAYED"
       ],
       "tags": ["edge-case"]
@@ -98,6 +98,23 @@
         "Season record in the title block reflects the forfeit correctly"
       ],
       "tags": ["failure-mode"]
+    },
+    {
+      "id": 9,
+      "prompt": "Scout BETC-Downright Smashing-Schiller and merge a recent match that is not yet on TennisRecord.",
+      "inputs": {
+        "team": "BETC-Downright Smashing-Schiller",
+        "year": 2026,
+        "manual_matches": "path/to/manual_matches.json"
+      },
+      "expected_output": "The generated report includes the manual match alongside scraped matches, updates affected roster records, and reflects the added sample in the strategy section.",
+      "pass_criteria": [
+        "Report generates successfully with --manual-matches",
+        "Completed match count increases by the number of manual matches provided",
+        "At least one roster player's season or local record changes to reflect the manual result",
+        "Strategy section text changes to incorporate the added manual sample"
+      ],
+      "tags": ["happy-path", "edge-case"]
     }
   ]
 }

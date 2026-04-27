@@ -1,7 +1,9 @@
 import argparse
+import difflib
 import json
 import re
 import subprocess
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from dataclasses import dataclass
@@ -78,6 +80,25 @@ def soup_from_url(url: str) -> BeautifulSoup:
 
 def normalize_space(text: str) -> str:
     return " ".join(text.split())
+
+
+def canonicalize_name(name: str) -> str:
+    normalized = unicodedata.normalize("NFKD", normalize_space(name))
+    ascii_name = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]+", "", ascii_name.lower())
+
+
+def resolve_roster_player(name: str, roster_by_key: Dict[str, Player]) -> Optional[Player]:
+    key = canonicalize_name(name)
+    direct = roster_by_key.get(key)
+    if direct:
+        return direct
+
+    matches = difflib.get_close_matches(key, roster_by_key.keys(), n=1, cutoff=0.92)
+    if matches:
+        return roster_by_key[matches[0]]
+
+    return None
 
 
 def slugify_filename(value: str) -> str:
@@ -623,6 +644,12 @@ def add_roster_table(document: Document, roster: List[Player], wildcards: List[s
 
 def add_match_tables(document: Document, matches: List[MatchReport], team_label: str = "ETC") -> None:
     document.add_heading("Completed Matches", level=2)
+    if not matches:
+        document.add_paragraph(
+            "No completed matches yet — every roster player is currently treated as a wildcard."
+        )
+        return
+
     for match in matches:
         document.add_paragraph(
             f"{match.date} vs {match.opponent} at {match.site} | Final: {match.team_name} {match.final_score}"
@@ -810,8 +837,6 @@ def configure_document(document: Document) -> None:
 def validate_report(document: Document, completed_matches: List[MatchReport], roster: List[Player]) -> None:
     if not roster:
         raise ValueError("Roster parsing failed; no players were found.")
-    if not completed_matches:
-        raise ValueError("No completed matches were parsed.")
     if not document.tables:
         raise ValueError("Generated report is missing tables.")
 
@@ -849,7 +874,7 @@ def apply_manual_match_stats(roster: List[Player], manual_matches: List[MatchRep
     and season_record to include results from manually entered matches.
     Called after manual matches are loaded, before the document is built.
     """
-    player_map = {p.name: p for p in roster}
+    player_map = {canonicalize_name(p.name): p for p in roster}
 
     for match in manual_matches:
         for court in match.courts:
@@ -858,7 +883,7 @@ def apply_manual_match_stats(roster: List[Player], manual_matches: List[MatchRep
             l_add = 1 if court.result == "L" else 0
 
             for name, _, _, _ in court.team_players:
-                player = player_map.get(name)
+                player = resolve_roster_player(name, player_map)
                 if not player:
                     continue
 
@@ -896,26 +921,38 @@ def load_manual_matches(
             { "court": "S1", "team_players": ["Name"], "opponent_players": ["Name"],
               "score": "6-2 6-4", "result": "W" }, ... ] }, ... ]
     """
-    roster_dr: Dict[str, Optional[float]] = {p.name: p.dr for p in roster}
+    roster_by_key: Dict[str, Player] = {canonicalize_name(p.name): p for p in roster}
     with open(path) as f:
         data = json.load(f)
 
-    # Collect all unique opponent names across all matches so we can fetch DRs in parallel
+    # Collect all unique opponent names and unresolved team names so we can fetch DRs in parallel.
     all_opp_names: set = set()
+    unresolved_team_names: set = set()
     for m in data:
         for c in m["courts"]:
             for name in c["opponent_players"]:
                 all_opp_names.add(name)
+            for name in c["team_players"]:
+                if resolve_roster_player(name, roster_by_key) is None:
+                    unresolved_team_names.add(name)
 
     opp_info: Dict[str, Tuple[Optional[float], str, str]] = {}
+    team_fallback_info: Dict[str, Tuple[Optional[float], str, str]] = {}
     with ThreadPoolExecutor(max_workers=10) as pool:
         future_to_opp = {pool.submit(fetch_player_info_by_name, name, year): name for name in all_opp_names}
+        future_to_team = {pool.submit(fetch_player_info_by_name, name, year): name for name in unresolved_team_names}
         for future in as_completed(future_to_opp):
             name = future_to_opp[future]
             try:
                 opp_info[name] = future.result()
             except Exception:
                 opp_info[name] = (None, "—", "—")
+        for future in as_completed(future_to_team):
+            name = future_to_team[future]
+            try:
+                team_fallback_info[name] = future.result()
+            except Exception:
+                team_fallback_info[name] = (None, "—", "—")
 
     matches: List[MatchReport] = []
     seen_names: set = set()
@@ -933,10 +970,18 @@ def load_manual_matches(
 
             team_players: List[Tuple[str, Optional[float], str, str]] = []
             for name in c["team_players"]:
+                roster_player = resolve_roster_player(name, roster_by_key)
+                if roster_player:
+                    resolved_name = roster_player.name
+                    seen_names.add(resolved_name)
+                    dr = roster_player.dr
+                    rt = rating_types.get(resolved_name, "—")
+                    ur = usta_ratings.get(resolved_name, "—")
+                    team_players.append((resolved_name, dr, rt, ur))
+                    continue
+
                 seen_names.add(name)
-                dr = roster_dr.get(name)
-                rt = rating_types.get(name, "—")
-                ur = usta_ratings.get(name, "—")
+                dr, rt, ur = team_fallback_info.get(name, (None, "—", "—"))
                 team_players.append((name, dr, rt, ur))
 
             opp_players: List[Tuple[str, Optional[float], str, str]] = [

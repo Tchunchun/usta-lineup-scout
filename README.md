@@ -15,6 +15,7 @@ Both skills pull from TennisRecord and generate `.docx` reports containing:
 - completed match lineups with court-by-court results
 - players who have not yet appeared in a completed match
 - strategy notes by court
+- optional manual recent-match ingestion from JSON when TennisRecord is behind
 
 ## Repo Structure
 
@@ -49,6 +50,12 @@ python3 -m pip install --user python-docx beautifulsoup4 lxml
 
 ```bash
 python3 skills/usta-team-scout/scripts/generate_report.py --team "TEAM NAME" --year 2026
+```
+
+**Team report with manual recent matches:**
+
+```bash
+python3 skills/usta-team-scout/scripts/generate_report.py --team "TEAM NAME" --year 2026 --manual-matches path/to/manual_matches.json
 ```
 
 **Player report:**
