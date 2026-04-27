@@ -1,6 +1,8 @@
 import argparse
+import json
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -185,6 +187,28 @@ def fetch_wildcard_prior_season(player_href: str, current_year: int) -> str:
 
     courts_str = "/".join(sorted(courts_seen)) if courts_seen else "?"
     return f"{prior_year}: {wins}W-{losses}L, {courts_str}"
+
+
+def fetch_player_info_by_name(name: str, year: int) -> Tuple[Optional[float], str, str]:
+    """
+    Look up a player's Dynamic Rating and USTA rating from their TennisRecord profile by name.
+    Returns (dr, rating_type, usta_rating) e.g. (2.9155, 'C', '3.0C').
+    """
+    url = f"{BASE_URL}/adult/profile.aspx?playername={quote(name, safe='')}&year={year}"
+    try:
+        html = fetch(url)
+        dr: Optional[float] = None
+        dr_m = re.search(r'<span style="font-weight:bold;">(\d\.\d{3,})\s*</span>', html)
+        if dr_m:
+            dr = float(dr_m.group(1))
+        ntrp_m = re.search(r'<span style="font-weight:bold;">(\d\.\d)\s+([A-Z])</span>', html)
+        if ntrp_m:
+            ntrp, suffix = ntrp_m.groups()
+            rating_type = suffix if suffix in {"C", "S"} else "—"
+            return dr, rating_type, f"{ntrp}{rating_type}"
+        return dr, "—", "—"
+    except Exception:
+        return None, "—", "—"
 
 
 def parse_player_rating(profile_href: str) -> Tuple[str, str]:
@@ -618,6 +642,137 @@ def build_output_path(year: int, level: str, team_name: str, output_arg: Optiona
     return reports_dir / build_output_name(year, level, team_name)
 
 
+def parse_record(record: str) -> Tuple[int, int]:
+    """Parse 'W-L' string into (wins, losses). Returns (0, 0) on failure."""
+    m = re.match(r"(\d+)-(\d+)", record.strip())
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+
+def fmt_record(wins: int, losses: int) -> str:
+    return f"{wins}-{losses}"
+
+
+def apply_manual_match_stats(roster: List[Player], manual_matches: List[MatchReport]) -> None:
+    """
+    Patch each roster player's local_singles, local_doubles, local_record,
+    and season_record to include results from manually entered matches.
+    Called after manual matches are loaded, before the document is built.
+    """
+    player_map = {p.name: p for p in roster}
+
+    for match in manual_matches:
+        for court in match.courts:
+            is_singles = court.court.startswith("S")
+            w_add = 1 if court.result == "W" else 0
+            l_add = 1 if court.result == "L" else 0
+
+            for name, _, _, _ in court.team_players:
+                player = player_map.get(name)
+                if not player:
+                    continue
+
+                # Overall season record
+                sw, sl = parse_record(player.season_record)
+                player.season_record = fmt_record(sw + w_add, sl + l_add)
+
+                # Local court-type record
+                if is_singles:
+                    lsw, lsl = parse_record(player.local_singles)
+                    player.local_singles = fmt_record(lsw + w_add, lsl + l_add)
+                else:
+                    ldw, ldl = parse_record(player.local_doubles)
+                    player.local_doubles = fmt_record(ldw + w_add, ldl + l_add)
+
+                # Local overall record
+                lrw, lrl = parse_record(player.local_record)
+                player.local_record = fmt_record(lrw + w_add, lrl + l_add)
+
+
+def load_manual_matches(
+    path: str,
+    team_name: str,
+    rating_types: Dict[str, str],
+    usta_ratings: Dict[str, str],
+    roster: List[Player],
+    year: int = 2026,
+) -> Tuple[List[MatchReport], set]:
+    """
+    Load manually entered match data from a JSON file.
+    Returns (list of MatchReport, set of team player names who appeared).
+    JSON schema:
+      [ { "date": "4/25/2026", "site": "...", "opponent": "...",
+          "courts": [
+            { "court": "S1", "team_players": ["Name"], "opponent_players": ["Name"],
+              "score": "6-2 6-4", "result": "W" }, ... ] }, ... ]
+    """
+    roster_dr: Dict[str, Optional[float]] = {p.name: p.dr for p in roster}
+    with open(path) as f:
+        data = json.load(f)
+
+    # Collect all unique opponent names across all matches so we can fetch DRs in parallel
+    all_opp_names: set = set()
+    for m in data:
+        for c in m["courts"]:
+            for name in c["opponent_players"]:
+                all_opp_names.add(name)
+
+    opp_info: Dict[str, Tuple[Optional[float], str, str]] = {}
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        future_to_opp = {pool.submit(fetch_player_info_by_name, name, year): name for name in all_opp_names}
+        for future in as_completed(future_to_opp):
+            name = future_to_opp[future]
+            try:
+                opp_info[name] = future.result()
+            except Exception:
+                opp_info[name] = (None, "—", "—")
+
+    matches: List[MatchReport] = []
+    seen_names: set = set()
+
+    for m in data:
+        courts: List[MatchCourt] = []
+        team_wins = 0
+        team_losses = 0
+        for c in m["courts"]:
+            result = c["result"]
+            if result == "W":
+                team_wins += 1
+            else:
+                team_losses += 1
+
+            team_players: List[Tuple[str, Optional[float], str, str]] = []
+            for name in c["team_players"]:
+                seen_names.add(name)
+                dr = roster_dr.get(name)
+                rt = rating_types.get(name, "—")
+                ur = usta_ratings.get(name, "—")
+                team_players.append((name, dr, rt, ur))
+
+            opp_players: List[Tuple[str, Optional[float], str, str]] = [
+                (name, *opp_info.get(name, (None, "—", "—"))) for name in c["opponent_players"]
+            ]
+
+            courts.append(MatchCourt(
+                court=c["court"],
+                team_players=team_players,
+                opponent_players=opp_players,
+                score=c["score"],
+                result=result,
+            ))
+
+        matches.append(MatchReport(
+            date=m["date"],
+            site=m["site"],
+            team_name=team_name,
+            opponent=m["opponent"],
+            final_score=f"{team_wins}-{team_losses}",
+            team_won_match=team_wins > team_losses,
+            courts=courts,
+        ))
+
+    return matches, seen_names
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a USTA scouting report from TennisRecord.")
     parser.add_argument("--team", required=True, help="Exact TennisRecord team name.")
@@ -632,6 +787,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         help="Optional output filename. Reports are always written into the repo-root reports/ folder.",
+    )
+    parser.add_argument(
+        "--manual-matches",
+        dest="manual_matches",
+        help="Path to a JSON file of manually entered match results to include alongside scraped data.",
     )
     return parser.parse_args()
 
@@ -658,7 +818,15 @@ def main() -> None:
             participant_links[name] = a.get("href")
 
     profile_links.update(participant_links)
-    player_ratings = {name: parse_player_rating(href) for name, href in profile_links.items()}
+    player_ratings: Dict[str, Tuple[str, str]] = {}
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        future_to_name = {pool.submit(parse_player_rating, href): name for name, href in profile_links.items()}
+        for future in as_completed(future_to_name):
+            name = future_to_name[future]
+            try:
+                player_ratings[name] = future.result()
+            except Exception:
+                player_ratings[name] = ("—", "—")
     rating_types = {name: rating_info[0] for name, rating_info in player_ratings.items()}
     usta_ratings = {name: rating_info[1] for name, rating_info in player_ratings.items()}
 
@@ -676,16 +844,31 @@ def main() -> None:
         seen_hrefs.add(href)
         completed_matches.append(parse_match(href, rating_types, usta_ratings, resolved_team_name))
 
+    if args.manual_matches:
+        manual_matches, manual_names = load_manual_matches(
+            args.manual_matches, resolved_team_name, rating_types, usta_ratings, roster, year=args.year
+        )
+        completed_matches.extend(manual_matches)
+        participant_names.update(manual_names)
+        apply_manual_match_stats(roster, manual_matches)
+
     wildcards = sorted(player.name for player in roster if player.name not in participant_names)
 
     # Enrich wildcards with prior-season history
     wildcard_players = {p.name: p for p in roster if p.name in wildcards}
     wildcard_history: Dict[str, str] = {}
-    for name, player in wildcard_players.items():
-        if player.href:
-            history = fetch_wildcard_prior_season(player.href, args.year)
-            if history:
-                wildcard_history[name] = history
+    wc_with_href = [(name, player) for name, player in wildcard_players.items() if player.href]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        future_to_wc = {pool.submit(fetch_wildcard_prior_season, player.href, args.year): name
+                        for name, player in wc_with_href}
+        for future in as_completed(future_to_wc):
+            name = future_to_wc[future]
+            try:
+                history = future.result()
+                if history:
+                    wildcard_history[name] = history
+            except Exception:
+                pass
 
     strategy = build_strategy(completed_matches, wildcards)
     wins = sum(1 for match in completed_matches if match.team_won_match)
