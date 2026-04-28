@@ -25,5 +25,5 @@ __pycache__/
 !skills/
 !skills/usta-team-scout/
 !skills/usta-team-scout/**
-!skills/player-scout/
-!skills/player-scout/**
+!skills/usta-player-scout/
+!skills/usta-player-scout/**

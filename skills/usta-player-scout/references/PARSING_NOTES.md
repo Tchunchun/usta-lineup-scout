@@ -1,4 +1,4 @@
-# Parsing Notes — player-scout
+# Parsing Notes — usta-player-scout
 
 Tennisrecord.com HTML quirks specific to the per-player search, profile, and match-history pages. Load only when debugging a parsing failure or handling one of these edge cases.
 

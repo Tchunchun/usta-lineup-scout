@@ -1,4 +1,4 @@
-# Report Style Reference — player-scout
+# Report Style Reference — usta-player-scout
 
 Visual conventions for the single-player scouting `.docx`. Load only when generating the report.
 

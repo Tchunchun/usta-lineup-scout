@@ -80,10 +80,10 @@
       "id": 7,
       "prompt": "What's Jane Zhu's dynamic rating trend over the past year?",
       "inputs": { "player": "Jane Zhu" },
-      "expected_output": "usta-team-scout should NOT trigger — this is a single-player lookup. The player-scout skill should handle it instead.",
+      "expected_output": "usta-team-scout should NOT trigger — this is a single-player lookup. The usta-player-scout skill should handle it instead.",
       "pass_criteria": [
         "usta-team-scout is not activated",
-        "The request is routed to player-scout (or the user is redirected there)"
+        "The request is routed to usta-player-scout (or the user is redirected there)"
       ],
       "tags": ["negative"]
     },

@@ -1,6 +1,6 @@
 ---
 name: usta-team-scout
-description: Generate a USTA opponent team scouting report (.docx) from public tennisrecord.com data. Use when the user asks to scout, look up, research, or analyze an opponent USTA team — e.g. "scout BETC-Downright Smashing", "look up [team]", "prepare for our match against [team]", "pull up [team]'s lineup history". User provides a team name and optionally a league format (e.g. "18+ 3.0"). Do not use for single-player lookups (use player-scout) or non-USTA leagues.
+description: Generate a USTA opponent team scouting report (.docx) from public tennisrecord.com data. Use when the user asks to scout, look up, research, or analyze an opponent USTA team — e.g. "scout BETC-Downright Smashing", "look up [team]", "prepare for our match against [team]", "pull up [team]'s lineup history". User provides a team name and optionally a league format (e.g. "18+ 3.0"). Do not use for single-player lookups (use usta-player-scout) or non-USTA leagues.
 license: Proprietary
 compatibility: Requires Python 3.10+, python-docx, beautifulsoup4, lxml, and network access to tennisrecord.com.
 metadata:
@@ -19,7 +19,7 @@ Generate a `.docx` opponent scouting report from public `tennisrecord.com` data.
 Use when the user asks to scout, look up, or prepare for a USTA opponent **team**. Trigger phrases: "scout [team]", "look up [team]", "prepare for our match against [team]", "pull up [team]'s lineup history", "what do we know about [team]".
 
 Do not use when:
-- The user wants a single-player report — use `player-scout` instead.
+- The user wants a single-player report — use `usta-player-scout` instead.
 - The league is not USTA — the data source does not cover it.
 - The user only wants to book a court — use `seattle-tennis-booking`.
 

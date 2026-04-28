@@ -5,7 +5,7 @@
 USTA opponent scouting reports from `tennisrecord.com`. Two skills under `skills/`:
 
 - **usta-team-scout** — whole-team `.docx` report
-- **player-scout** — single-player `.docx` report
+- **usta-player-scout** — single-player `.docx` report
 
 ## Dependencies
 
@@ -21,7 +21,7 @@ python3 -m pip install --user python-docx beautifulsoup4 lxml
 | Task | Command |
 |------|---------|
 | Team report | `python3 skills/usta-team-scout/scripts/generate_report.py --team "NAME" --year 2026` |
-| Player report | `python3 skills/player-scout/scripts/player_report.py --player "First Last" --area "AREA" --year 2026` |
+| Player report | `python3 skills/usta-player-scout/scripts/player_report.py --input path/to/player_data.json` |
 
 ## Key Conventions
 

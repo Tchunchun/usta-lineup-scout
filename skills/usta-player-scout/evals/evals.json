@@ -1,5 +1,5 @@
 {
-  "skill_name": "player-scout",
+  "skill_name": "usta-player-scout",
   "evals": [
     {
       "id": 1,
@@ -31,12 +31,12 @@
       "id": 3,
       "prompt": "Scout John Smith — no location given.",
       "inputs": { "first": "John", "last": "Smith" },
-      "expected_output": "Search returns many matches. Skill asks the user to pick via AskUserQuestion with one option per candidate, each showing name + location + NTRP.",
+      "expected_output": "Direct profile fetch without `s` resolves ambiguously or to the wrong player. Skill asks the user for the exact TennisRecord profile URL or `&s=` disambiguator instead of trying a POST search.",
       "pass_criteria": [
+        "Skill does not use the TennisRecord POST search form",
         "Skill does not auto-pick a candidate",
-        "AskUserQuestion is invoked with ≥2 options",
-        "Each option includes the player's location and NTRP",
-        "No .docx is written before the user selects"
+        "User is asked for the exact profile URL or `s` value",
+        "No .docx is written before disambiguation"
       ],
       "tags": ["edge-case"]
     },
@@ -81,9 +81,9 @@
       "id": 7,
       "prompt": "Scout team BETC-Downright Smashing-Schiller for 18+ 3.0.",
       "inputs": { "team": "BETC-Downright Smashing-Schiller" },
-      "expected_output": "player-scout should NOT trigger — this is a team-level request. The usta-team-scout skill should handle it instead.",
+      "expected_output": "usta-player-scout should NOT trigger — this is a team-level request. The usta-team-scout skill should handle it instead.",
       "pass_criteria": [
-        "player-scout is not activated",
+        "usta-player-scout is not activated",
         "The request is routed to usta-team-scout (or the user is redirected there)"
       ],
       "tags": ["negative"]
@@ -92,7 +92,7 @@
       "id": 8,
       "prompt": "Scout a player whose profile page returns HTTP 429 mid-fetch.",
       "inputs": { "first": "Rate", "last": "Limited" },
-      "expected_output": "Skill detects the 429, stops, surfaces a clear message, and does not write a partial report.",
+      "expected_output": "Skill detects the 429 from fetch_webpage, stops, surfaces a clear message, and does not write a partial report.",
       "pass_criteria": [
         "No .docx file is written",
         "Message to user explains the rate limit and suggests trying again later",
